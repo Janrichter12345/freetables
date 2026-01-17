@@ -7,6 +7,17 @@ import logo from "../assets/logo.png";
 const RESTAURANT_ID = "31391688-5672-4801-8691-3e3d15ac3e6a";
 const AUTOCOMPLETE_LIMIT = 3;
 
+// ✅ Partner läuft unter /partner (Routing-Basis)
+const PARTNER_BASE = "/partner";
+
+// ✅ Fixe Prod-URL (Vercel ENV), sonst local/dev fallback
+function getPartnerOrigin() {
+  const envUrl = import.meta.env.VITE_PARTNER_APP_URL;
+  if (envUrl) return String(envUrl).replace(/\/+$/, "");
+  if (import.meta.env.DEV) return "http://localhost:5174";
+  return window.location.origin;
+}
+
 function isEmail(v) {
   const s = String(v || "").trim();
   return s.includes("@") && s.includes(".");
@@ -32,7 +43,6 @@ async function nominatimSearch(q) {
   const query = String(q || "").trim();
   if (!query) return [];
 
-  // Österreich-Fokus + countrycodes=at
   const withAustria = /österreich|austria|\bat\b/i.test(query) ? query : `${query}, Österreich`;
 
   const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=${AUTOCOMPLETE_LIMIT}&countrycodes=at&q=${encodeURIComponent(
@@ -47,7 +57,6 @@ async function nominatimSearch(q) {
   const json = await res.json();
   const arr = Array.isArray(json) ? json : [];
 
-  // Fallback: Tokens sortiert (hilft bei “falscher Reihenfolge”)
   if (arr.length === 0) {
     const tokens = query.split(/\s+/).map((t) => t.trim()).filter(Boolean);
     if (tokens.length >= 2) {
@@ -101,7 +110,6 @@ export default function Login() {
   const [loginMsg, setLoginMsg] = useState("");
   const [loginErr, setLoginErr] = useState("");
 
-  // Pflichtfelder erst nach Klick rot
   const [regSubmitted, setRegSubmitted] = useState(false);
   const [loginSubmitted, setLoginSubmitted] = useState(false);
 
@@ -109,19 +117,19 @@ export default function Login() {
   const [addrOpen, setAddrOpen] = useState(false);
   const [addrLoading, setAddrLoading] = useState(false);
   const [addrItems, setAddrItems] = useState([]);
-  const [addrPick, setAddrPick] = useState(null); // {label, lat, lng}
+  const [addrPick, setAddrPick] = useState(null);
   const addrBoxRef = useRef(null);
 
   // Auth session
   const [session, setSession] = useState(null);
   const userEmail = useMemo(() => session?.user?.email || "", [session]);
 
-  // ✅ WICHTIG: Redirect MUSS auf /partner/ gehen
+  // ✅ Redirect ist IMMER Prod-URL (oder dev), nicht “random localhost”
   const redirectTo = useMemo(() => {
-    return new URL("/partner/", window.location.origin).toString();
+    const origin = getPartnerOrigin();
+    return new URL(`${PARTNER_BASE}/`, origin).toString();
   }, []);
 
-  // ✅ Magic-link callback + Session laden
   useEffect(() => {
     let cancelled = false;
 
@@ -132,7 +140,7 @@ export default function Login() {
       if (code) {
         const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
         // ✅ URL säubern (auf /partner/)
-        window.history.replaceState({}, "", "/partner/");
+        window.history.replaceState({}, "", `${PARTNER_BASE}/`);
         if (error) console.warn("exchangeCodeForSession:", error);
       }
 
@@ -155,7 +163,6 @@ export default function Login() {
     };
   }, []);
 
-  // ✅ Wenn eingeloggt -> direkt Dashboard (Restaurant-ID fix)
   useEffect(() => {
     if (!session?.user?.email) return;
     try {
@@ -164,7 +171,6 @@ export default function Login() {
     navigate("/dashboard");
   }, [session, navigate]);
 
-  // Autocomplete debounce
   useEffect(() => {
     let active = true;
     const q = String(rAddress || "").trim();
@@ -189,7 +195,6 @@ export default function Login() {
     };
   }, [rAddress, addrOpen]);
 
-  // Click outside -> close suggestions
   useEffect(() => {
     const onDown = (e) => {
       const el = addrBoxRef.current;
@@ -231,8 +236,7 @@ export default function Login() {
     }
   };
 
-  const requiredBorder = (bad) =>
-    bad ? "border-red-500 bg-red-50" : "border-[#E7E2D7] bg-[#F8F7F4]";
+  const requiredBorder = (bad) => (bad ? "border-red-500 bg-red-50" : "border-[#E7E2D7] bg-[#F8F7F4]");
 
   const regNameBad = regSubmitted && !String(rName || "").trim();
   const regAddrBad = regSubmitted && !String(rAddress || "").trim();
@@ -272,7 +276,6 @@ export default function Login() {
         return;
       }
 
-      // ✅ Kein Multi-Restaurant: wir updaten GENAU dieses Restaurant
       const payload = {
         id: RESTAURANT_ID,
         name,
@@ -313,12 +316,7 @@ export default function Login() {
 
     setSendingLogin(true);
     try {
-      const { data, error } = await supabase
-        .from("restaurants")
-        .select("email")
-        .eq("id", RESTAURANT_ID)
-        .maybeSingle();
-
+      const { data, error } = await supabase.from("restaurants").select("email").eq("id", RESTAURANT_ID).maybeSingle();
       if (error) console.warn(error);
 
       const stored = String(data?.email || "").trim().toLowerCase();
@@ -361,9 +359,7 @@ export default function Login() {
                 schneller füllen
               </h1>
 
-              <p className="mt-3 text-sm sm:text-base text-[#7A8696] max-w-xl">
-                Mehr Laufkundschaft, weniger Leerstand.
-              </p>
+              <p className="mt-3 text-sm sm:text-base text-[#7A8696] max-w-xl">Mehr Laufkundschaft, weniger Leerstand.</p>
 
               <div className="mt-5 grid gap-2 text-sm text-[#2E2E2E]">
                 <Bullet>Mehr Sichtbarkeit in der Nähe</Bullet>
@@ -381,11 +377,8 @@ export default function Login() {
             <div className="lg:flex lg:justify-end">
               <div className="w-full max-w-md bg-white rounded-3xl border border-[#E7E2D7] p-5 sm:p-6 shadow-sm">
                 <div className="font-semibold text-[#2E2E2E] text-lg">Start</div>
-                <div className="text-sm text-[#9AA7B8] mt-1">
-                  Pflicht: Restaurantname, Adresse, E-Mail.
-                </div>
+                <div className="text-sm text-[#9AA7B8] mt-1">Pflicht: Restaurantname, Adresse, E-Mail.</div>
 
-                {/* REGISTRIEREN */}
                 <form
                   autoComplete="off"
                   onSubmit={(e) => {
@@ -419,12 +412,10 @@ export default function Login() {
                         autoComplete="off"
                       />
 
-                      {(addrOpen && (addrLoading || addrItems.length > 0)) && (
+                      {addrOpen && (addrLoading || addrItems.length > 0) && (
                         <div className="absolute z-30 left-0 right-0 mt-2 bg-white border border-[#E7E2D7] rounded-2xl shadow-sm overflow-hidden">
                           <div className="max-h-40 overflow-auto">
-                            {addrLoading && (
-                              <div className="px-4 py-3 text-sm text-[#9AA7B8]">Suche…</div>
-                            )}
+                            {addrLoading && <div className="px-4 py-3 text-sm text-[#9AA7B8]">Suche…</div>}
 
                             {!addrLoading &&
                               addrItems.map((it, idx) => (
@@ -441,10 +432,6 @@ export default function Login() {
                                   {it.label}
                                 </button>
                               ))}
-
-                            {!addrLoading && addrItems.length === 0 && (
-                              <div className="px-4 py-3 text-sm text-[#9AA7B8]">Keine Treffer.</div>
-                            )}
                           </div>
                         </div>
                       )}
@@ -547,15 +534,12 @@ export default function Login() {
                   </form>
                 )}
 
-                <div className="mt-3 text-xs text-[#9AA7B8] leading-relaxed">
-                  Nach dem Bestätigen bleibst du eingeloggt.
-                </div>
+                <div className="mt-3 text-xs text-[#9AA7B8] leading-relaxed">Nach dem Bestätigen bleibst du eingeloggt.</div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Warum */}
         <div className="max-w-6xl mx-auto mt-10 pb-14">
           <div className="text-center">
             <div className="text-2xl sm:text-3xl font-semibold text-[#2E2E2E]">Warum FreeTables?</div>
