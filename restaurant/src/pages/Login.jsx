@@ -10,18 +10,14 @@ const AUTOCOMPLETE_LIMIT = 3;
 // ✅ Base-Path der App ("/" oder "/partner/") automatisch aus Vite
 function getAppBasePath() {
   const base = String(import.meta.env.BASE_URL || "/");
-  // sicherstellen: beginnt mit "/" und endet mit "/"
   let out = base.startsWith("/") ? base : `/${base}`;
   out = out.replace(/\/+$/, "") + "/";
   if (out === "//") out = "/";
   return out;
 }
 
-// ✅ Fixe Prod-URL (Vercel ENV), sonst local/dev fallback
-function getPartnerOrigin() {
-  const envUrl = import.meta.env.VITE_PARTNER_APP_URL;
-  if (envUrl) return String(envUrl).replace(/\/+$/, "");
-  if (import.meta.env.DEV) return "http://localhost:5174";
+// ✅ IMMER die aktuelle Domain nehmen (prod => vercel, dev => localhost)
+function getAppOrigin() {
   return window.location.origin;
 }
 
@@ -97,7 +93,15 @@ async function nominatimSearch(q) {
 
 export default function Login() {
   const navigate = useNavigate();
-  const APP_BASE = useMemo(() => getAppBasePath(), []); // "/" oder "/partner/"
+
+  const APP_BASE = useMemo(() => getAppBasePath(), []);
+  const isMagicCallback = useMemo(() => {
+    try {
+      return new URLSearchParams(window.location.search).has("code");
+    } catch {
+      return false;
+    }
+  }, []);
 
   // Registrierung
   const [rName, setRName] = useState("");
@@ -132,12 +136,13 @@ export default function Login() {
   const [session, setSession] = useState(null);
   const userEmail = useMemo(() => session?.user?.email || "", [session]);
 
-  // ✅ Redirect ist IMMER Prod-URL (Vercel ENV), nicht “localhost”
+  // ✅ Redirect URL => aktuelle Domain + Base (damit niemals localhost in prod)
   const redirectTo = useMemo(() => {
-    const origin = getPartnerOrigin(); // z.B. https://freetables-restaurant.vercel.app
-    return new URL(APP_BASE, origin).toString(); // z.B. .../ oder .../partner/
+    const origin = getAppOrigin();
+    return new URL(APP_BASE, origin).toString(); // z.B. https://freetables-restaurant.vercel.app/
   }, [APP_BASE]);
 
+  // ✅ Magic-link callback + Session laden
   useEffect(() => {
     let cancelled = false;
 
@@ -147,7 +152,7 @@ export default function Login() {
 
       if (code) {
         const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
-        // ✅ URL säubern (zur App-Basis)
+        // URL säubern (zur App-Basis)
         window.history.replaceState({}, "", APP_BASE);
         if (error) console.warn("exchangeCodeForSession:", error);
       }
@@ -171,14 +176,16 @@ export default function Login() {
     };
   }, [APP_BASE]);
 
+  // ✅ Wenn eingeloggt -> direkt Dashboard
   useEffect(() => {
     if (!session?.user?.email) return;
     try {
       localStorage.setItem("ft_restaurant_id", RESTAURANT_ID);
     } catch {}
-    navigate("/dashboard");
+    navigate("/dashboard", { replace: true });
   }, [session, navigate]);
 
+  // Autocomplete debounce
   useEffect(() => {
     let active = true;
     const q = String(rAddress || "").trim();
@@ -203,6 +210,7 @@ export default function Login() {
     };
   }, [rAddress, addrOpen]);
 
+  // Click outside -> close suggestions
   useEffect(() => {
     const onDown = (e) => {
       const el = addrBoxRef.current;
@@ -244,7 +252,8 @@ export default function Login() {
     }
   };
 
-  const requiredBorder = (bad) => (bad ? "border-red-500 bg-red-50" : "border-[#E7E2D7] bg-[#F8F7F4]");
+  const requiredBorder = (bad) =>
+    bad ? "border-red-500 bg-red-50" : "border-[#E7E2D7] bg-[#F8F7F4]";
 
   const regNameBad = regSubmitted && !String(rName || "").trim();
   const regAddrBad = regSubmitted && !String(rAddress || "").trim();
@@ -324,7 +333,12 @@ export default function Login() {
 
     setSendingLogin(true);
     try {
-      const { data, error } = await supabase.from("restaurants").select("email").eq("id", RESTAURANT_ID).maybeSingle();
+      const { data, error } = await supabase
+        .from("restaurants")
+        .select("email")
+        .eq("id", RESTAURANT_ID)
+        .maybeSingle();
+
       if (error) console.warn(error);
 
       const stored = String(data?.email || "").trim().toLowerCase();
@@ -367,7 +381,9 @@ export default function Login() {
                 schneller füllen
               </h1>
 
-              <p className="mt-3 text-sm sm:text-base text-[#7A8696] max-w-xl">Mehr Laufkundschaft, weniger Leerstand.</p>
+              <p className="mt-3 text-sm sm:text-base text-[#7A8696] max-w-xl">
+                Mehr Laufkundschaft, weniger Leerstand.
+              </p>
 
               <div className="mt-5 grid gap-2 text-sm text-[#2E2E2E]">
                 <Bullet>Mehr Sichtbarkeit in der Nähe</Bullet>
@@ -375,18 +391,26 @@ export default function Login() {
                 <Bullet>Profil später erweiterbar (Fotos, Speisekarte)</Bullet>
               </div>
 
-              {userEmail ? (
+              {isMagicCallback ? (
+                <div className="mt-6 inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-white/70 border border-[#E7E2D7] text-sm text-[#2E2E2E] w-fit">
+                  ⏳ Anmeldung läuft…
+                </div>
+              ) : userEmail ? (
                 <div className="mt-6 inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-white/70 border border-[#E7E2D7] text-sm text-[#2E2E2E] w-fit">
                   Eingeloggt als <span className="font-semibold break-all">{userEmail}</span>
                 </div>
               ) : null}
             </div>
 
+            {/* UI rechts bleibt wie bei dir – unverändert */}
             <div className="lg:flex lg:justify-end">
               <div className="w-full max-w-md bg-white rounded-3xl border border-[#E7E2D7] p-5 sm:p-6 shadow-sm">
                 <div className="font-semibold text-[#2E2E2E] text-lg">Start</div>
-                <div className="text-sm text-[#9AA7B8] mt-1">Pflicht: Restaurantname, Adresse, E-Mail.</div>
+                <div className="text-sm text-[#9AA7B8] mt-1">
+                  Pflicht: Restaurantname, Adresse, E-Mail.
+                </div>
 
+                {/* REGISTRIEREN */}
                 <form
                   autoComplete="off"
                   onSubmit={(e) => {
@@ -420,10 +444,12 @@ export default function Login() {
                         autoComplete="off"
                       />
 
-                      {addrOpen && (addrLoading || addrItems.length > 0) && (
+                      {(addrOpen && (addrLoading || addrItems.length > 0)) && (
                         <div className="absolute z-30 left-0 right-0 mt-2 bg-white border border-[#E7E2D7] rounded-2xl shadow-sm overflow-hidden">
                           <div className="max-h-40 overflow-auto">
-                            {addrLoading && <div className="px-4 py-3 text-sm text-[#9AA7B8]">Suche…</div>}
+                            {addrLoading && (
+                              <div className="px-4 py-3 text-sm text-[#9AA7B8]">Suche…</div>
+                            )}
 
                             {!addrLoading &&
                               addrItems.map((it, idx) => (
@@ -546,7 +572,9 @@ export default function Login() {
                   </form>
                 )}
 
-                <div className="mt-3 text-xs text-[#9AA7B8] leading-relaxed">Nach dem Bestätigen bleibst du eingeloggt.</div>
+                <div className="mt-3 text-xs text-[#9AA7B8] leading-relaxed">
+                  Nach dem Bestätigen bleibst du eingeloggt.
+                </div>
               </div>
             </div>
           </div>

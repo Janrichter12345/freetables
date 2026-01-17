@@ -1,18 +1,48 @@
-import { useState } from "react";
-import { useAuth } from "../auth/AuthProvider";
+// nutzerapp/src/pages/Login.jsx
+import { useMemo, useState } from "react";
+import { supabase } from "../lib/supabase";
+
+function getAppBasePath() {
+  const base = String(import.meta.env.BASE_URL || "/");
+  let out = base.startsWith("/") ? base : `/${base}`;
+  out = out.replace(/\/+$/, "") + "/";
+  if (out === "//") out = "/";
+  return out;
+}
 
 export default function LoginPage() {
-  const { sendMagicLink } = useAuth();
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [err, setErr] = useState("");
 
+  const APP_BASE = useMemo(() => getAppBasePath(), []);
+
+  // ✅ Redirect immer auf DIESE Domain (prod = vercel / dev = localhost)
+  const redirectTo = useMemo(() => {
+    const origin = window.location.origin;
+    return new URL(`${APP_BASE}auth/callback`, origin).toString();
+  }, [APP_BASE]);
+
   const onSubmit = async (e) => {
     e.preventDefault();
     setErr("");
+    setSent(false);
+
+    const mail = String(email || "").trim().toLowerCase();
+    if (!mail.includes("@")) {
+      setErr("Bitte gültige E-Mail eingeben.");
+      return;
+    }
 
     try {
-      await sendMagicLink(email.trim());
+      const { error } = await supabase.auth.signInWithOtp({
+        email: mail,
+        options: {
+          emailRedirectTo: redirectTo,
+          shouldCreateUser: true,
+        },
+      });
+      if (error) throw error;
       setSent(true);
     } catch (e2) {
       setErr(e2?.message || "Etwas ist schiefgelaufen.");
