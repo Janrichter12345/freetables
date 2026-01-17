@@ -7,8 +7,15 @@ import logo from "../assets/logo.png";
 const RESTAURANT_ID = "31391688-5672-4801-8691-3e3d15ac3e6a";
 const AUTOCOMPLETE_LIMIT = 3;
 
-// ✅ Partner läuft unter /partner (Routing-Basis)
-const PARTNER_BASE = "/partner";
+// ✅ Base-Path der App ("/" oder "/partner/") automatisch aus Vite
+function getAppBasePath() {
+  const base = String(import.meta.env.BASE_URL || "/");
+  // sicherstellen: beginnt mit "/" und endet mit "/"
+  let out = base.startsWith("/") ? base : `/${base}`;
+  out = out.replace(/\/+$/, "") + "/";
+  if (out === "//") out = "/";
+  return out;
+}
 
 // ✅ Fixe Prod-URL (Vercel ENV), sonst local/dev fallback
 function getPartnerOrigin() {
@@ -90,6 +97,7 @@ async function nominatimSearch(q) {
 
 export default function Login() {
   const navigate = useNavigate();
+  const APP_BASE = useMemo(() => getAppBasePath(), []); // "/" oder "/partner/"
 
   // Registrierung
   const [rName, setRName] = useState("");
@@ -124,11 +132,11 @@ export default function Login() {
   const [session, setSession] = useState(null);
   const userEmail = useMemo(() => session?.user?.email || "", [session]);
 
-  // ✅ Redirect ist IMMER Prod-URL (oder dev), nicht “random localhost”
+  // ✅ Redirect ist IMMER Prod-URL (Vercel ENV), nicht “localhost”
   const redirectTo = useMemo(() => {
-    const origin = getPartnerOrigin();
-    return new URL(`${PARTNER_BASE}/`, origin).toString();
-  }, []);
+    const origin = getPartnerOrigin(); // z.B. https://freetables-restaurant.vercel.app
+    return new URL(APP_BASE, origin).toString(); // z.B. .../ oder .../partner/
+  }, [APP_BASE]);
 
   useEffect(() => {
     let cancelled = false;
@@ -139,8 +147,8 @@ export default function Login() {
 
       if (code) {
         const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
-        // ✅ URL säubern (auf /partner/)
-        window.history.replaceState({}, "", `${PARTNER_BASE}/`);
+        // ✅ URL säubern (zur App-Basis)
+        window.history.replaceState({}, "", APP_BASE);
         if (error) console.warn("exchangeCodeForSession:", error);
       }
 
@@ -161,7 +169,7 @@ export default function Login() {
       cancelled = true;
       unsub?.();
     };
-  }, []);
+  }, [APP_BASE]);
 
   useEffect(() => {
     if (!session?.user?.email) return;
@@ -432,6 +440,10 @@ export default function Login() {
                                   {it.label}
                                 </button>
                               ))}
+
+                            {!addrLoading && addrItems.length === 0 && (
+                              <div className="px-4 py-3 text-sm text-[#9AA7B8]">Keine Treffer.</div>
+                            )}
                           </div>
                         </div>
                       )}
