@@ -3,5 +3,5 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  base: "/partner/",
+  // WICHTIG: kein base "/partner/" wenn die App auf eigener Domain läuft
 });
