@@ -1,35 +1,71 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 
-const AuthCtx = createContext(null);
+const AuthContext = createContext(null);
+
+// Base-Path automatisch aus Vite (normal "/" bei nutzerapp)
+function getAppBasePath() {
+  const base = String(import.meta.env.BASE_URL || "/");
+  let out = base.startsWith("/") ? base : `/${base}`;
+  out = out.replace(/\/+$/, "") + "/";
+  if (out === "//") out = "/";
+  return out;
+}
+
+// Für DEV -> localhost:5173, für PROD -> window.origin oder ENV
+function getUserAppOrigin() {
+  const envUrl = import.meta.env.VITE_USER_APP_URL; // optional: https://freetables.vercel.app
+  if (envUrl) return String(envUrl).replace(/\/+$/, "");
+  if (import.meta.env.DEV) return "http://localhost:5173";
+  return window.location.origin;
+}
+
+// Redirect URL für Magic Link (muss bei Supabase als Redirect URL erlaubt sein!)
+function buildMagicLinkRedirectUrl() {
+  const origin = getUserAppOrigin();
+  const base = getAppBasePath();
+  // Wir schicken IMMER auf /auth/callback (Route muss existieren)
+  return new URL(`${base}auth/callback`, origin).toString();
+}
 
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  const user = session?.user || null;
+
   useEffect(() => {
-    let mounted = true;
+    let alive = true;
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (!mounted) return;
-      setSession(data.session || null);
+    const init = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!alive) return;
+
+      setSession(data?.session || null);
       setLoading(false);
-    });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession || null);
-    });
+      const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+        setSession(newSession || null);
+      });
+
+      return () => sub?.subscription?.unsubscribe?.();
+    };
+
+    let unsub;
+    init().then((fn) => (unsub = fn));
 
     return () => {
-      mounted = false;
-      sub?.subscription?.unsubscribe?.();
+      alive = false;
+      unsub?.();
     };
   }, []);
 
-  const user = session?.user || null;
+  const sendMagicLink = async (emailRaw) => {
+    const email = String(emailRaw || "").trim().toLowerCase();
+    if (!email || !email.includes("@")) throw new Error("Bitte gültige E-Mail eingeben.");
 
-  const sendMagicLink = async (email) => {
-    const redirectTo = `${window.location.origin}/auth/callback`;
+    const redirectTo = buildMagicLinkRedirectUrl();
+
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
@@ -37,6 +73,7 @@ export function AuthProvider({ children }) {
         shouldCreateUser: true,
       },
     });
+
     if (error) throw error;
   };
 
@@ -44,15 +81,22 @@ export function AuthProvider({ children }) {
     await supabase.auth.signOut();
   };
 
-  return (
-    <AuthCtx.Provider value={{ session, user, loading, sendMagicLink, signOut }}>
-      {children}
-    </AuthCtx.Provider>
+  const value = useMemo(
+    () => ({
+      user,
+      session,
+      loading,
+      sendMagicLink,
+      signOut,
+    }),
+    [user, session, loading]
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
-  const ctx = useContext(AuthCtx);
-  if (!ctx) throw new Error("useAuth must be used inside <AuthProvider />");
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }
