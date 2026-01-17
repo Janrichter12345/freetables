@@ -3,7 +3,6 @@ import { supabase } from "../lib/supabase";
 
 const AuthContext = createContext(null);
 
-// Base-Path automatisch aus Vite (normal "/" bei nutzerapp)
 function getAppBasePath() {
   const base = String(import.meta.env.BASE_URL || "/");
   let out = base.startsWith("/") ? base : `/${base}`;
@@ -12,19 +11,16 @@ function getAppBasePath() {
   return out;
 }
 
-// Für DEV -> localhost:5173, für PROD -> window.origin oder ENV
-function getUserAppOrigin() {
-  const envUrl = import.meta.env.VITE_USER_APP_URL; // optional: https://freetables.vercel.app
-  if (envUrl) return String(envUrl).replace(/\/+$/, "");
+// ✅ Redirect IMMER auf die aktuelle Domain (Prod = vercel domain / Preview = preview domain)
+// ✅ Nur in DEV fest auf localhost
+function getCurrentOrigin() {
   if (import.meta.env.DEV) return "http://localhost:5173";
   return window.location.origin;
 }
 
-// Redirect URL für Magic Link (muss bei Supabase als Redirect URL erlaubt sein!)
 function buildMagicLinkRedirectUrl() {
-  const origin = getUserAppOrigin();
+  const origin = getCurrentOrigin();
   const base = getAppBasePath();
-  // Wir schicken IMMER auf /auth/callback (Route muss existieren)
   return new URL(`${base}auth/callback`, origin).toString();
 }
 
@@ -82,13 +78,7 @@ export function AuthProvider({ children }) {
   };
 
   const value = useMemo(
-    () => ({
-      user,
-      session,
-      loading,
-      sendMagicLink,
-      signOut,
-    }),
+    () => ({ user, session, loading, sendMagicLink, signOut }),
     [user, session, loading]
   );
 
