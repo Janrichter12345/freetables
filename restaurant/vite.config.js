@@ -3,6 +3,6 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  // ✅ Partner-App läuft unter /partner/
-  base: "/partner/",
+  // ✅ Vercel-Deployment läuft auf Domain-Root
+  base: "/",
 });
