@@ -21,19 +21,24 @@ export default function AuthCallback() {
       try {
         const url = window.location.href;
 
-        // ✅ Supabase Session aus dem Code holen
+        // Wenn Supabase einen Fehler zurückgibt
+        const params = new URLSearchParams(window.location.search);
+        const e = params.get("error_description") || params.get("error");
+        if (e) throw new Error(e);
+
+        // ✅ Session aus dem Code holen (PKCE)
         const { error } = await supabase.auth.exchangeCodeForSession(url);
         if (error) throw error;
 
-        // ✅ URL sauber machen (keine code params mehr)
+        // ✅ URL sauber machen
         const base = getAppBasePath();
         window.history.replaceState({}, "", base);
 
-        // ✅ Weiter in die App (Root ist am sichersten)
+        // ✅ Weiter in die App
         navigate("/", { replace: true });
-      } catch (e) {
+      } catch (e2) {
         if (!alive) return;
-        setErr(e?.message || "Login fehlgeschlagen.");
+        setErr(e2?.message || "Login fehlgeschlagen.");
       }
     };
 

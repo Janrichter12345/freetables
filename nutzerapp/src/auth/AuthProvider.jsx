@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabase";
 
 const AuthContext = createContext(null);
 
+// Base-Path automatisch aus Vite (normal "/" bei nutzerapp)
 function getAppBasePath() {
   const base = String(import.meta.env.BASE_URL || "/");
   let out = base.startsWith("/") ? base : `/${base}`;
@@ -11,15 +12,14 @@ function getAppBasePath() {
   return out;
 }
 
-// ✅ Redirect IMMER auf die aktuelle Domain (Prod = vercel domain / Preview = preview domain)
-// ✅ Nur in DEV fest auf localhost
-function getCurrentOrigin() {
-  if (import.meta.env.DEV) return "http://localhost:5173";
+// ✅ IMMER aktuelle Domain verwenden (prod => vercel, dev => localhost)
+function getAppOrigin() {
   return window.location.origin;
 }
 
+// ✅ Redirect URL für Magic Link
 function buildMagicLinkRedirectUrl() {
-  const origin = getCurrentOrigin();
+  const origin = getAppOrigin();
   const base = getAppBasePath();
   return new URL(`${base}auth/callback`, origin).toString();
 }
@@ -78,7 +78,13 @@ export function AuthProvider({ children }) {
   };
 
   const value = useMemo(
-    () => ({ user, session, loading, sendMagicLink, signOut }),
+    () => ({
+      user,
+      session,
+      loading,
+      sendMagicLink,
+      signOut,
+    }),
     [user, session, loading]
   );
 
