@@ -1,0 +1,5 @@
+{
+  "deno.enable": true,
+  "deno.enablePaths": ["supabase/functions"],
+  "deno.path": "C:\\Users\\Jan\\AppData\\Local\\Microsoft\\WinGet\\Packages\\DenoLand.Deno_Microsoft.Winget.Source_8wekyb3d8bbwe\\deno.exe"
+}

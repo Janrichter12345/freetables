@@ -1,0 +1,6 @@
+/* src/App.css */
+/* Vite-Template Styles entfernt: die haben Mobile-Layout (max-width/padding/center) kaputt gemacht. */
+
+#root {
+  min-height: 100%;
+}
