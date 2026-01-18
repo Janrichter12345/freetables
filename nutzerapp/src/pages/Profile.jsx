@@ -12,53 +12,9 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 // ✅ IMMER ONLINE (kein localhost mehr)
 const PARTNER_ORIGIN = "https://freetables-restaurant.vercel.app";
 
-// (localStorage fallback – hilft nur wenn gleicher Origin)
-const PARTNER_STORAGE_KEY = "ft_restaurant_auth";
-
-// ✅ Cookie, das die Partner-App setzt (funktioniert NICHT domain-uebergreifend,
-// aber laesst es drin als "nice to have" falls du spaeter subdomains nutzt)
-const PARTNER_COOKIE = "ft_partner";
-
-function hasPartnerCookie() {
-  try {
-    return document.cookie.split("; ").some((c) => c === `${PARTNER_COOKIE}=1`);
-  } catch {
-    return false;
-  }
-}
-
-function hasActivePartnerSession() {
-  // 1) Cookie (nur same-site / gleiche Domain)
-  if (hasPartnerCookie()) return true;
-
-  // 2) localStorage (nur gleicher Origin)
-  try {
-    const raw = localStorage.getItem(PARTNER_STORAGE_KEY);
-    if (!raw) return false;
-
-    const obj = JSON.parse(raw);
-    const sess = obj?.session || obj?.currentSession || obj;
-    const token = sess?.access_token || obj?.access_token || null;
-    if (!token) return false;
-
-    const exp = sess?.expires_at ?? obj?.expires_at ?? null;
-
-    if (typeof exp === "number") {
-      if (exp * 1000 <= Date.now()) return false;
-    } else if (typeof exp === "string") {
-      const t = Date.parse(exp);
-      if (Number.isFinite(t) && t <= Date.now()) return false;
-    }
-
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// ✅ wenn authed -> direkt dashboard, sonst start/login
-function partnerUrl(authed) {
-  return authed ? `${PARTNER_ORIGIN}/dashboard` : `${PARTNER_ORIGIN}/`;
+// ✅ wenn Partner existiert -> Dashboard, sonst Start/Login
+function partnerUrl(isPartner) {
+  return isPartner ? `${PARTNER_ORIGIN}/dashboard` : `${PARTNER_ORIGIN}/`;
 }
 
 function statusLabel(status) {
@@ -240,10 +196,11 @@ function dedupeBySlot(items) {
 export default function ProfilePage() {
   const { user, signOut, loading } = useAuth();
   const email = user?.email || "";
+  const uid = user?.id || null;
+
   const initials = (email?.split("@")?.[0] || "U").slice(0, 2).toUpperCase();
   const emailWrap = useMemo(() => (email ? email.replace("@", "@\u200B") : ""), [email]);
 
-  const uid = user?.id || null;
   const HISTORY_KEY = uid ? `${HISTORY_BASE}:${uid}` : HISTORY_BASE;
   const ACTIVE_KEY = uid ? `${ACTIVE_BASE}:${uid}` : ACTIVE_BASE;
 
@@ -251,33 +208,54 @@ export default function ProfilePage() {
   const [dbMap, setDbMap] = useState({});
   const [statusApiError, setStatusApiError] = useState("");
 
-  // ✅ Partner-Button Zustand
-  const [partnerAuthed, setPartnerAuthed] = useState(false);
+  // ✅ Partner Status (DB Check: existiert restaurants.email = user.email ?)
+  const [isPartner, setIsPartner] = useState(false);
+  const [partnerChecking, setPartnerChecking] = useState(false);
 
+  // ✅ DB Check ob User Partner ist
   useEffect(() => {
-    const refresh = () => setPartnerAuthed(hasActivePartnerSession());
-    refresh();
+    let alive = true;
 
-    const onFocus = () => refresh();
-    const onVis = () => {
-      if (!document.hidden) refresh();
+    const run = async () => {
+      if (!email) {
+        setIsPartner(false);
+        return;
+      }
+
+      setPartnerChecking(true);
+      try {
+        const { data, error } = await supabase
+          .from("restaurants")
+          .select("id")
+          .eq("email", String(email).trim().toLowerCase())
+          .maybeSingle();
+
+        if (!alive) return;
+
+        if (error) {
+          console.warn("partner check error:", error);
+          setIsPartner(false);
+          return;
+        }
+
+        setIsPartner(!!data?.id);
+      } catch (e) {
+        if (!alive) return;
+        console.warn("partner check failed:", e);
+        setIsPartner(false);
+      } finally {
+        if (alive) setPartnerChecking(false);
+      }
     };
 
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVis);
-
+    run();
     return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVis);
+      alive = false;
     };
-  }, []);
+  }, [email]);
 
   const openPartnerPortal = () => {
-    const authed = hasActivePartnerSession();
-    setPartnerAuthed(authed);
-
-    const url = partnerUrl(authed);
-
+    const url = partnerUrl(isPartner);
     try {
       window.open(url, "_blank", "noopener,noreferrer");
     } catch {
@@ -285,27 +263,10 @@ export default function ProfilePage() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="bg-[#F8F7F4] min-h-full px-4 sm:px-5 py-4 sm:py-6">
-        <div className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-6 shadow-sm text-center text-[#9AA7B8]">
-          Lädt…
-        </div>
-      </div>
-    );
-  }
-
-  if (!user || !uid) {
-    return (
-      <div className="bg-[#F8F7F4] min-h-full px-4 sm:px-5 py-4 sm:py-6">
-        <div className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-6 shadow-sm text-center text-[#9AA7B8]">
-          Bitte anmelden.
-        </div>
-      </div>
-    );
-  }
-
+  // ===== History Migration / Load =====
   useEffect(() => {
+    if (!uid) return;
+
     const legacyActive = safeJsonParse(localStorage.getItem(ACTIVE_BASE), null);
     const legacyHistory = safeJsonParse(localStorage.getItem(HISTORY_BASE), []);
 
@@ -381,10 +342,12 @@ export default function ProfilePage() {
 
     localStorage.setItem(HISTORY_KEY, JSON.stringify(cleaned));
     setHistory(cleaned);
-  }, [ACTIVE_KEY, HISTORY_KEY]);
+  }, [uid, ACTIVE_KEY, HISTORY_KEY]);
 
+  // ===== Status Polling =====
   useEffect(() => {
     let cancelled = false;
+    if (!uid) return;
 
     const ids = history.map((r) => r?.id).filter(Boolean);
     if (ids.length === 0) {
@@ -427,9 +390,12 @@ export default function ProfilePage() {
       cancelled = true;
       clearInterval(t);
     };
-  }, [history]);
+  }, [uid, history]);
 
+  // ===== Declined entfernen =====
   useEffect(() => {
+    if (!uid) return;
+
     const declinedIds = new Set(
       Object.values(dbMap || {})
         .filter((it) => String(it?.status || "") === "declined")
@@ -449,9 +415,11 @@ export default function ProfilePage() {
     if (active?.id && declinedIds.has(active.id)) {
       localStorage.removeItem(ACTIVE_KEY);
     }
-  }, [dbMap, history, ACTIVE_KEY, HISTORY_KEY]);
+  }, [uid, dbMap, history, ACTIVE_KEY, HISTORY_KEY]);
 
+  // ===== Enrich + persist =====
   useEffect(() => {
+    if (!uid) return;
     if (!history.length) return;
 
     const now = Date.now();
@@ -519,7 +487,7 @@ export default function ProfilePage() {
       );
 
     if (changed || sig(cleaned) !== sig(history)) {
-      cleaned.sort((a, b) => basisTimeMs(b) - basisTimeMs(a));
+      cleaned.sort((a, b) => basisTimeMs(b) - (basisTimeMs(a)));
       localStorage.setItem(HISTORY_KEY, JSON.stringify(cleaned));
       setHistory(cleaned);
     }
@@ -536,7 +504,7 @@ export default function ProfilePage() {
         }
       }
     }
-  }, [dbMap, history, HISTORY_KEY, ACTIVE_KEY]);
+  }, [uid, dbMap, history, HISTORY_KEY, ACTIVE_KEY]);
 
   const mergedReservations = useMemo(() => {
     return history
@@ -656,6 +624,29 @@ export default function ProfilePage() {
     );
   };
 
+  // ===== Render States =====
+  if (loading) {
+    return (
+      <div className="bg-[#F8F7F4] min-h-full px-4 sm:px-5 py-4 sm:py-6">
+        <div className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-6 shadow-sm text-center text-[#9AA7B8]">
+          Lädt…
+        </div>
+      </div>
+    );
+  }
+
+  if (!user || !uid) {
+    return (
+      <div className="bg-[#F8F7F4] min-h-full px-4 sm:px-5 py-4 sm:py-6">
+        <div className="bg-white rounded-2xl sm:rounded-3xl p-5 sm:p-6 shadow-sm text-center text-[#9AA7B8]">
+          Bitte anmelden.
+        </div>
+      </div>
+    );
+  }
+
+  const partnerLabel = isPartner ? "Partner-Zugang" : "Jetzt Partner werden";
+
   return (
     <div className="bg-[#F8F7F4] min-h-full px-4 sm:px-5 py-4 sm:py-6">
       <div className="mx-auto w-full max-w-[560px]">
@@ -672,16 +663,21 @@ export default function ProfilePage() {
               >
                 {emailWrap || "Eingeloggt"}
               </div>
-              <div className="text-[11px] sm:text-xs text-[#9AA7B8] leading-tight">Account</div>
+              <div className="text-[11px] sm:text-xs text-[#9AA7B8] leading-tight">
+                Account
+                {partnerChecking ? " · prüfe Partner…" : isPartner ? " · Partner" : ""}
+              </div>
             </div>
           </div>
 
           <div className="mt-3 flex justify-end gap-2">
             <button
               onClick={openPartnerPortal}
-              className="h-10 inline-flex items-center justify-center bg-[#6F8F73] hover:bg-[#5f7f66] text-white px-5 rounded-2xl text-[12px] sm:text-sm font-semibold leading-none shadow-sm active:scale-[0.98]"
+              className="h-10 inline-flex items-center justify-center bg-[#6F8F73] hover:bg-[#5f7f66] text-white px-5 rounded-2xl text-[12px] sm:text-sm font-semibold leading-none shadow-sm active:scale-[0.98] disabled:opacity-60"
+              disabled={partnerChecking}
+              title={partnerChecking ? "Bitte kurz warten…" : partnerLabel}
             >
-              {partnerAuthed ? "Partner-Zugang" : "Jetzt Partner werden"}
+              {partnerLabel}
             </button>
 
             <button
