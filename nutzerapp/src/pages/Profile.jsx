@@ -1,4 +1,4 @@
-// src/pages/Profile.jsx (oder wo deine Datei liegt)
+// nutzerapp/src/pages/Profile.jsx
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../auth/AuthProvider";
@@ -9,14 +9,14 @@ const ACTIVE_BASE = "activeReservation";
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
-const PARTNER_PORTAL_URL = import.meta.env.DEV
-  ? "http://localhost:5174/partner/"
-  : "/partner/";
+// ✅ IMMER ONLINE (kein localhost mehr)
+const PARTNER_ORIGIN = "https://freetables-restaurant.vercel.app";
 
 // (localStorage fallback – hilft nur wenn gleicher Origin)
 const PARTNER_STORAGE_KEY = "ft_restaurant_auth";
 
-// ✅ Cookie, das die Partner-App setzt
+// ✅ Cookie, das die Partner-App setzt (funktioniert NICHT domain-uebergreifend,
+// aber laesst es drin als "nice to have" falls du spaeter subdomains nutzt)
 const PARTNER_COOKIE = "ft_partner";
 
 function hasPartnerCookie() {
@@ -28,10 +28,10 @@ function hasPartnerCookie() {
 }
 
 function hasActivePartnerSession() {
-  // ✅ 1) Cookie funktioniert auch über 5173/5174
+  // 1) Cookie (nur same-site / gleiche Domain)
   if (hasPartnerCookie()) return true;
 
-  // ✅ 2) Fallback: localStorage (nur wenn gleicher Origin)
+  // 2) localStorage (nur gleicher Origin)
   try {
     const raw = localStorage.getItem(PARTNER_STORAGE_KEY);
     if (!raw) return false;
@@ -54,6 +54,11 @@ function hasActivePartnerSession() {
   } catch {
     return false;
   }
+}
+
+// ✅ wenn authed -> direkt dashboard, sonst start/login
+function partnerUrl(authed) {
+  return authed ? `${PARTNER_ORIGIN}/dashboard` : `${PARTNER_ORIGIN}/`;
 }
 
 function statusLabel(status) {
@@ -253,7 +258,6 @@ export default function ProfilePage() {
     const refresh = () => setPartnerAuthed(hasActivePartnerSession());
     refresh();
 
-    // Cookie ändert sich nicht via "storage" event → Fokus/Visibility ist wichtig
     const onFocus = () => refresh();
     const onVis = () => {
       if (!document.hidden) refresh();
@@ -269,11 +273,15 @@ export default function ProfilePage() {
   }, []);
 
   const openPartnerPortal = () => {
-    setPartnerAuthed(hasActivePartnerSession());
+    const authed = hasActivePartnerSession();
+    setPartnerAuthed(authed);
+
+    const url = partnerUrl(authed);
+
     try {
-      window.open(PARTNER_PORTAL_URL, "_blank", "noopener,noreferrer");
+      window.open(url, "_blank", "noopener,noreferrer");
     } catch {
-      window.location.href = PARTNER_PORTAL_URL;
+      window.location.href = url;
     }
   };
 
@@ -296,8 +304,6 @@ export default function ProfilePage() {
       </div>
     );
   }
-
-  // ======= ab hier ist dein Code unverändert (History, Polling, UI, etc.) =======
 
   useEffect(() => {
     const legacyActive = safeJsonParse(localStorage.getItem(ACTIVE_BASE), null);
