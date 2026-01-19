@@ -17,10 +17,13 @@ function safeJsonParse(raw, fallback) {
 export default function ReserveModal({ table, restaurant, onClose }) {
   const navigate = useNavigate();
 
-  const [step, setStep] = useState(1); // 1=ETA, 2=Name, 3=Confirm
+  // 1=ETA, 2=Name, 3=Confirm
+  const [step, setStep] = useState(1);
   const [eta, setEta] = useState(10);
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // nur Auth-Check (KEIN "aktive Reservierung?" Check mehr!)
   const [checking, setChecking] = useState(true);
   const [err, setErr] = useState("");
 
@@ -33,11 +36,11 @@ export default function ReserveModal({ table, restaurant, onClose }) {
   const incEta = () => setEta((p) => Math.min(20, Number(p || 1) + 1));
   const decEta = () => setEta((p) => Math.max(1, Number(p || 1) - 1));
 
-  // ✅ Nur Login-Check (KEIN Active-Reservation-Blocking mehr!)
+  // ✅ Nur: wenn nicht eingeloggt -> login
   useEffect(() => {
     let cancelled = false;
 
-    const checkUser = async () => {
+    const checkAuth = async () => {
       setChecking(true);
       setErr("");
 
@@ -55,7 +58,8 @@ export default function ReserveModal({ table, restaurant, onClose }) {
       setChecking(false);
     };
 
-    checkUser();
+    checkAuth();
+
     return () => {
       cancelled = true;
     };
@@ -115,34 +119,34 @@ export default function ReserveModal({ table, restaurant, onClose }) {
           eta_minutes: etaMinutes,
           seats: table.seats,
 
-          // redundante Felder (falls Function/Trigger diese nutzt)
+          // redundante Felder (falls Function/Trigger sie nutzt)
           customer_name: reservedFor,
           arrival_minutes: etaMinutes,
         },
       });
 
-      // ❗️WICHTIG: wir blocken NICHT mehr im UI – aber wenn der SERVER noch sperrt,
-      // kommt hier evtl. 409 zurück. Dann MUSS die Sperre in der Function raus.
-      const statusCode = error?.context?.status;
-      if (statusCode === 409 || res?.error === "active_reservation_exists") {
-        setErr(
-          "Der Server blockiert gerade mehrere aktive Reservierungen (409). Bitte entferne die Sperre in der Supabase Function 'reservation-create'."
-        );
-        setLoading(false);
-        return;
-      }
-
+      // ✅ WICHTIG: NICHT mehr blocken – jede Reservierung soll erlaubt sein.
       if (error || !res?.ok) {
-        const msg = res?.error || error?.message || "Server-Fehler. Bitte erneut.";
-        setErr(msg);
+        const statusCode = error?.context?.status;
+
+        // Falls dein Backend immer noch blockt, sieht man das hier sehr klar:
+        if (statusCode === 409 || res?.error === "active_reservation_exists") {
+          setErr(
+            "Server blockt noch mehrere Reservierungen (409). Das kommt aus der Edge Function 'reservation-create' – dort muss die Sperre entfernt werden."
+          );
+        } else {
+          const msg = res?.error || error?.message || "Server-Fehler. Bitte erneut.";
+          setErr(msg);
+        }
+
         setLoading(false);
         return;
       }
 
-      // ✅ localStorage: jede Reservierung immer in History speichern
+      // ✅ localStorage: im Profil sichtbar (History)
       const uid = user.id;
       const HISTORY_KEY = `${HISTORY_BASE}:${uid}`;
-      const ACTIVE_KEY = `${ACTIVE_BASE}:${uid}`; // für Kompatibilität: setzten wir auf "letzte"
+      const ACTIVE_KEY = `${ACTIVE_BASE}:${uid}`;
 
       const reservationId = String(res?.reservation_id || "");
       const createdAtMs = Date.now();
@@ -159,7 +163,7 @@ export default function ReserveModal({ table, restaurant, onClose }) {
         status: "pending",
       };
 
-      // Optional (Kompatibilität): ACTIVE zeigt nur die letzte, aber History enthält ALLE
+      // Active: nur "letzte" – blockt aber nichts mehr (mehrere Reservierungen sind trotzdem möglich)
       localStorage.setItem(ACTIVE_KEY, JSON.stringify(item));
 
       const prev = safeJsonParse(localStorage.getItem(HISTORY_KEY), []);
@@ -173,10 +177,7 @@ export default function ReserveModal({ table, restaurant, onClose }) {
 
       // 30 Tage cleanup
       const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-      const cleaned = Array.from(map.values()).filter((r) => {
-        const ca = Number(r?.createdAt || 0);
-        return ca >= cutoff;
-      });
+      const cleaned = Array.from(map.values()).filter((r) => Number(r?.createdAt || 0) >= cutoff);
 
       cleaned.sort((a, b) => Number(b?.createdAt || 0) - Number(a?.createdAt || 0));
       localStorage.setItem(HISTORY_KEY, JSON.stringify(cleaned));
@@ -208,7 +209,7 @@ export default function ReserveModal({ table, restaurant, onClose }) {
         </div>
 
         {checking && (
-          <div className="mb-4 bg-[#F8F7F4] text-[#9AA7B8] rounded-2xl p-3 text-sm">Prüfe Login…</div>
+          <div className="mb-4 bg-[#F8F7F4] text-[#9AA7B8] rounded-2xl p-3 text-sm">Prüfe Anmeldung…</div>
         )}
 
         {err && <div className="mb-4 bg-[#F8F7F4] text-[#9AA7B8] rounded-2xl p-3 text-sm">{err}</div>}
