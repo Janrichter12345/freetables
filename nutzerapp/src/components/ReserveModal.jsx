@@ -14,36 +14,15 @@ function safeJsonParse(raw, fallback) {
   }
 }
 
-function isActiveReservation(r) {
-  const nowMs = Date.now();
-  const st = String(r?.status || "");
-
-  if (st === "pending") {
-    const exp = r?.expires_at ? new Date(String(r.expires_at)).getTime() : 0;
-    return Number.isFinite(exp) && exp > nowMs;
-  }
-
-  if (st === "accepted") {
-    const windowMs = 6 * 60 * 60 * 1000; // 6h
-    const t =
-      (r?.responded_at ? new Date(String(r.responded_at)).getTime() : 0) ||
-      (r?.created_at ? new Date(String(r.created_at)).getTime() : 0);
-    return Number.isFinite(t) && t > nowMs - windowMs;
-  }
-
-  return false;
-}
-
 export default function ReserveModal({ table, restaurant, onClose }) {
   const navigate = useNavigate();
 
-  const [step, setStep] = useState(1); // 0=Blocked, 1=ETA, 2=Name, 3=Confirm
+  const [step, setStep] = useState(1); // 1=ETA, 2=Name, 3=Confirm
   const [eta, setEta] = useState(10);
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [err, setErr] = useState("");
-  const [activeId, setActiveId] = useState(null);
 
   const etaMinutes = useMemo(() => {
     const n = Number(eta);
@@ -54,16 +33,18 @@ export default function ReserveModal({ table, restaurant, onClose }) {
   const incEta = () => setEta((p) => Math.min(20, Number(p || 1) + 1));
   const decEta = () => setEta((p) => Math.max(1, Number(p || 1) - 1));
 
-  // ✅ DB-Check: hat User schon eine aktive Reservierung? (FIX: nur für diesen User!)
+  // ✅ Nur Login-Check (KEIN Active-Reservation-Blocking mehr!)
   useEffect(() => {
     let cancelled = false;
 
-    const check = async () => {
+    const checkUser = async () => {
       setChecking(true);
       setErr("");
 
       const { data } = await supabase.auth.getUser();
       const user = data?.user;
+
+      if (cancelled) return;
 
       if (!user?.id) {
         onClose?.();
@@ -71,34 +52,10 @@ export default function ReserveModal({ table, restaurant, onClose }) {
         return;
       }
 
-      const { data: rows, error } = await supabase
-        .from("reservations")
-        .select("id,status,expires_at,responded_at,created_at")
-        .eq("user_id", user.id)
-        .in("status", ["pending", "accepted"])
-        .order("created_at", { ascending: false })
-        .limit(20);
-
-      if (cancelled) return;
-
-      if (error) {
-        console.warn("active reservation check error:", error);
-        setChecking(false);
-        return;
-      }
-
-      const list = Array.isArray(rows) ? rows : [];
-      const active = list.find((r) => isActiveReservation(r));
-
-      if (active) {
-        setActiveId(active.id);
-        setStep(0);
-      }
-
       setChecking(false);
     };
 
-    check();
+    checkUser();
     return () => {
       cancelled = true;
     };
@@ -154,21 +111,23 @@ export default function ReserveModal({ table, restaurant, onClose }) {
           restaurant_id: restaurant.id,
           table_id: table.id,
 
-          // ✅ bleibt für deine bestehende Logik
           reserved_for: reservedFor,
           eta_minutes: etaMinutes,
           seats: table.seats,
 
-          // ✅ NEU: redundante Felder (DB Trigger setzt es auch, falls Function es ignoriert)
+          // redundante Felder (falls Function/Trigger diese nutzt)
           customer_name: reservedFor,
           arrival_minutes: etaMinutes,
         },
       });
 
+      // ❗️WICHTIG: wir blocken NICHT mehr im UI – aber wenn der SERVER noch sperrt,
+      // kommt hier evtl. 409 zurück. Dann MUSS die Sperre in der Function raus.
       const statusCode = error?.context?.status;
       if (statusCode === 409 || res?.error === "active_reservation_exists") {
-        setActiveId(res?.active_reservation_id || null);
-        setStep(0);
+        setErr(
+          "Der Server blockiert gerade mehrere aktive Reservierungen (409). Bitte entferne die Sperre in der Supabase Function 'reservation-create'."
+        );
         setLoading(false);
         return;
       }
@@ -180,10 +139,10 @@ export default function ReserveModal({ table, restaurant, onClose }) {
         return;
       }
 
-      // ✅ localStorage: sofort sichtbar im Profil
+      // ✅ localStorage: jede Reservierung immer in History speichern
       const uid = user.id;
       const HISTORY_KEY = `${HISTORY_BASE}:${uid}`;
-      const ACTIVE_KEY = `${ACTIVE_BASE}:${uid}`;
+      const ACTIVE_KEY = `${ACTIVE_BASE}:${uid}`; // für Kompatibilität: setzten wir auf "letzte"
 
       const reservationId = String(res?.reservation_id || "");
       const createdAtMs = Date.now();
@@ -200,6 +159,7 @@ export default function ReserveModal({ table, restaurant, onClose }) {
         status: "pending",
       };
 
+      // Optional (Kompatibilität): ACTIVE zeigt nur die letzte, aber History enthält ALLE
       localStorage.setItem(ACTIVE_KEY, JSON.stringify(item));
 
       const prev = safeJsonParse(localStorage.getItem(HISTORY_KEY), []);
@@ -248,32 +208,10 @@ export default function ReserveModal({ table, restaurant, onClose }) {
         </div>
 
         {checking && (
-          <div className="mb-4 bg-[#F8F7F4] text-[#9AA7B8] rounded-2xl p-3 text-sm">Prüfe Verfügbarkeit…</div>
+          <div className="mb-4 bg-[#F8F7F4] text-[#9AA7B8] rounded-2xl p-3 text-sm">Prüfe Login…</div>
         )}
 
         {err && <div className="mb-4 bg-[#F8F7F4] text-[#9AA7B8] rounded-2xl p-3 text-sm">{err}</div>}
-
-        {step === 0 && (
-          <div>
-            <div className="bg-[#F8F7F4] rounded-2xl p-4 text-sm text-[#7A8696]">
-              Du hast bereits eine aktive Reservierung. Bitte schau im Profil nach.
-            </div>
-
-            <button onClick={() => navigate("/profile")} className="w-full mt-5 bg-[#6F8F73] text-white py-3 rounded-xl font-medium" type="button">
-              Zum Profil
-            </button>
-
-            <button onClick={onClose} className="w-full mt-2 bg-[#F8F7F4] text-[#2E2E2E] py-3 rounded-xl font-medium" type="button">
-              Schließen
-            </button>
-
-            {activeId && (
-              <div className="mt-3 text-xs text-[#9AA7B8] text-center">
-                Aktive Reservierung: <span className="font-semibold">{String(activeId).slice(0, 8)}…</span>
-              </div>
-            )}
-          </div>
-        )}
 
         {step === 1 && (
           <div>
